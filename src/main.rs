@@ -1,156 +1,136 @@
-use vcf::{VCFReader, U8Vec, VCFHeaderFilterAlt, VCFError, VCFRecord};
-use flate2::read::MultiGzDecoder;
-use std::fs::File;
-use std::io::BufReader;
+use rust_htslib::bcf::{Reader, Read, record};
 use std::env;
 use std::collections::HashMap;
-
-// make a ID -> Record in-memory representation of the VCF
-fn index_vcf_by_id(vcf_path : &String) -> Result<HashMap<String, VCFRecord>, std::io::Error> {
-    let mut mymap = HashMap::new();
-    let file = match File::open(vcf_path) {
-        Err(why) => panic!("Error opening {}: {}", vcf_path, why),
-        Ok(file) => file,
-    };
-    let decoder = MultiGzDecoder::new(file);
-    let buf_reader = BufReader::new(decoder);
-    let mut reader = match VCFReader::new(buf_reader) {
-        Err(why) => panic!("error parsing vcf {}: {}", vcf_path, why),
-        Ok(reader) => reader,
-    };
-
-    let mut vcf_record = reader.empty_record();
-    loop {
-        match reader.next_record(&mut vcf_record) {
-            Err(why) => panic!("error iterating vcf {}", why),
-            Ok(success) => {
-                if success {
-                    let id_bytes = vcf_record.id[0].clone();
-                    let id_string = String::from_utf8(id_bytes).unwrap();
-                    mymap.insert(id_string, vcf_record.clone());                    
-                } else {
-                    break;
-                }
-            }
-        }
+    
+// Store ID -> AT for each record in the deconstruct VCF
+fn make_id_to_at_index(vcf_path : &String) -> HashMap<String, Vec<String>> {
+    let mut id_to_at = HashMap::new();
+    let mut vcf = Reader::from_path(vcf_path).expect("Error opening VCF");
+    for (_i, record_result) in vcf.records().enumerate() {
+        let record = record_result.expect("Fail to read record");
+        let record_id = &record.id();
+        let id_string = String::from_utf8_lossy(record_id);
+        let id_string_cpy = (*id_string).to_string();
+        let at_strings = get_vcf_at(&record);
+        id_to_at.insert(id_string_cpy, at_strings);
     }
-    Ok(mymap)
+    id_to_at
 }
 
-// make a <CHROM,POS> -> Record in-memory representation of the VCF
-fn index_vcf_by_pos(vcf_path : &String) -> Result<HashMap<(String, u64), VCFRecord>, std::io::Error> {
-    let mut mymap = HashMap::new();
-    let file = match File::open(vcf_path) {
-        Err(why) => panic!("Error opening {}: {}", vcf_path, why),
-        Ok(file) => file,
-    };
-    let decoder = MultiGzDecoder::new(file);
-    let buf_reader = BufReader::new(decoder);
-    let mut reader = match VCFReader::new(buf_reader) {
-        Err(why) => panic!("error parsing vcf {}: {}", vcf_path, why),
-        Ok(reader) => reader,
-    };
-
-    let mut vcf_record = reader.empty_record();
-    loop {
-        match reader.next_record(&mut vcf_record) {
-            Err(why) => panic!("error iterating vcf {}", why),
-            Ok(success) => {
-                if success {
-                    let chrom_bytes = vcf_record.chromosome.clone();
-                    let chrom_string = String::from_utf8(chrom_bytes).unwrap();
-                    mymap.insert((chrom_string, vcf_record.position), vcf_record.clone());                    
-                } else {
-                    break;
-                }
-            }
-        }
+// Store <CHROM,POS> -> GT for each record in the pangenie VCF
+fn make_pos_to_gt_index(vcf_path : &String) -> HashMap<(String, i64), Vec<String>> {
+    let mut pos_to_gt = HashMap::new();
+    let mut vcf = Reader::from_path(vcf_path).expect("Error opening VCF");    
+    for (_i, record_result) in vcf.records().enumerate() {
+        let record = record_result.expect("Fail to read record");
+        let rid = record.rid().unwrap();
+        let chrom = record.header().rid2name(rid).expect("unable to confird rid to chrom");
+        let chrom_string = String::from_utf8_lossy(chrom);
+        let chrom_string_cpy = (*chrom_string).to_string();
+        let gts = get_vcf_gt(&record);
+        pos_to_gt.insert((chrom_string_cpy, record.pos()), gts);
     }
-    Ok(mymap)
+    pos_to_gt
 }
 
 // extract level from the field, returning 0 if not present
-fn get_vcf_level(record : &VCFRecord) -> u32 {
-    match record.info(b"LV") {
-        Some(value) => {
-            let lv_bytes = value[0].clone();
-            let lv_string = String::from_utf8(lv_bytes).unwrap();
-            lv_string.parse().unwrap()
+fn get_vcf_level(record : &record::Record) -> i32 {
+    let lv_info = record.info(b"LV");
+    let lv_opt = lv_info.integer().expect("Could not parse LV");
+    let lv_int = match lv_opt {
+        Some(lv_opt) => {
+            let lv_array = *lv_opt;
+            lv_array[0]
+        },
+        None => 0
+    };
+    lv_int
+}
+
+// extract the at from the vcf
+fn get_vcf_at(record : &record::Record) -> Vec<String> {
+    let at_info = record.info(b"AT");
+    let mut at_strings = Vec::new();
+    let at_res = at_info.string().expect("Could not Parse AT").expect("No AT found");
+    let at_array = &*at_res;
+    for at_bytes in at_array {
+        let s : String = String::from_utf8_lossy(*at_bytes).into_owned();
+        at_strings.push(s);
+    }
+    at_strings
+}
+
+// get the genotype from the VCF
+fn get_vcf_gt(record : &record::Record) -> Vec<String> {
+    let mut gts = Vec::new();
+    let genotypes = record.genotypes().expect("Error reading genotypes");
+    // todo: support more than one sample
+    let num_samples = record.header().sample_count();
+    if num_samples < 1 {
+        panic!("no samples!");
+    }
+    let sample_gt = genotypes.get(0);
+    gts.push(sample_gt.to_string());
+    gts
+}
+
+fn resolve_genotypes(full_vcf_path : &String,
+                     decon_id_to_at : &HashMap<String, Vec<String>>,
+                     pg_pos_to_gt : &HashMap<(String, i64), Vec<String>>,
+                     id_to_genotype : &mut HashMap<String, Vec<String>>) {
+
+    loop {
+        let mut vcf = Reader::from_path(full_vcf_path).expect("Error opening VCF");
+        let mut added_count : u64 = 0;
+        for (_i, record_result) in vcf.records().enumerate() {
+            let record = record_result.expect("Fail to read record");
+            let record_id = &record.id();
+            let id_string = String::from_utf8_lossy(record_id);
+            let id_string_cpy = (*id_string).to_string();
+            if id_to_genotype.contains_key(&id_string_cpy) {
+                // added in previous iteration
+                continue;
+            } 
+            added_count += 1;
+            let rid = record.rid().unwrap();
+            let chrom = record.header().rid2name(rid).expect("unable to confird rid to chrom");
+            let chrom_string = String::from_utf8_lossy(chrom);
+            let chrom_string_cpy = (*chrom_string).to_string();
+            let res = pg_pos_to_gt.get(&(chrom_string_cpy, record.pos()));
+            if res == None {
+                // this site isn't in pangenie, let's see if we can find the parent in
+                // the deconstruct vcf
+                println!("Need to look up in decon");
+            } else {
+                // the site was loaded form pangenie -- just pull the genotype directly
+                let gts = &res.unwrap();
+                println!("Foind in pangenie: {}", id_string_cpy);
+                id_to_genotype.insert(id_string_cpy, gts.to_vec());
+            }
         }
-        None => 0,
-    }
-}
-
-// make a list of record (references) that is sorted decreasing by level
-fn sort_by_level<'a>(id_to_record : &'a HashMap<String, VCFRecord>) -> Vec<&'a VCFRecord> {
-    let mut depth_sorted_records = Vec::new();
-
-    for (_key, value) in id_to_record {
-        depth_sorted_records.push(value);
-    }
-
-    depth_sorted_records.sort_by(|a, b| get_vcf_level(b).cmp(&get_vcf_level(a))); // reverse sort
-
-    depth_sorted_records
-}
-
-// scan the levels (top-down) and write the output genotypes in id_to_genome.
-// for level 0, the genotype is taken from pangenie (pos_to_pg_record)
-// for anything else, it comes from the parent (and is looked up in the output table)
-fn resolve_genotypes(id_to_record : &HashMap<String, VCFRecord>,
-                     pos_to_pg_record : &HashMap<(String, u64), VCFRecord>,
-                     levels : &Vec<&VCFRecord>,
-                     id_to_genotype : &mut HashMap<String, Vec<u32>>) {
-    
-    for &vcf_record in levels {
-        if get_vcf_level(vcf_record) == 0 {
-            let chrom_bytes = vcf_record.chromosome.clone();
-            let chrom_string = String::from_utf8(chrom_bytes).unwrap();
-            println!("resolving {} {}", chrom_string, vcf_record.position);
-            match pos_to_pg_record.get(&(chrom_string, vcf_record.position)) {
-                Some(pg_vcf_record) => {
-                    // dig out the first sample in the pangenie VCF
-                    // todo: allow multiple samples (which should be pretty trivial)
-                    let sample_bytes = &pg_vcf_record.header().samples()[0];
-                    println!("finding sample {}", String::from_utf8(sample_bytes.to_vec()).unwrap());
-                    match vcf_record.genotype(b"sample", b"GT") {
-                        Some(gt) => {
-                            let gt_bytes = gt[0].clone();
-                            let gt_string = String::from_utf8(gt_bytes).unwrap();
-                            println!("GIT STRING IS {}", gt_string);
-                        },
-                        None => panic!("couldnt find genotype"),
-                    };
-                    
-                }
-                None => panic!("Unable to find position {} in pangenie VCF", &vcf_record.position),
-            };
+        if added_count == 0 {
+            break;
         }
     }
 }
 
-fn main() -> Result<(), VCFError> {
+fn main() -> Result<(), String> {
 
 	 let args: Vec<String> = env::args().collect();
 	 let full_vcf_path = &args[1];
     let pg_vcf_path = &args[2];
 
     // index the full vcf from deconstruct (it must contain all the levels and annotations)
-    println!("Indexing deconstruct VCF by ID: {}", full_vcf_path);
-    let id_to_record = index_vcf_by_id(full_vcf_path).unwrap();
+    println!("Indexing deconstruct VCF ATs by ID: {}", full_vcf_path);
+    let decon_id_to_at = make_id_to_at_index(full_vcf_path);
     // index the pangenie vcf.  its id's aren't consistent so we use coordinates instead
-    println!("Indexing pangenie VCF by position: {}", pg_vcf_path);
-    let pos_to_pg_record = index_vcf_by_pos(pg_vcf_path).unwrap();
-    // in order to do a top-down traversal of the vcf, we sort it by decreasing level in the snarl
-    // tree.  this information comes out of the LV info tag
-    println!("Sorting by Level");
-    let levels = sort_by_level(&id_to_record);
+    println!("Indexing pangenie VCF GTs by position: {}", pg_vcf_path);
+    let pg_pos_to_gt = make_pos_to_gt_index(pg_vcf_path);
     
     // this is a map of resolved genotypes
-    // todo: learn enough rust to be able to do it in place
     println!("Resolving genotypes");
     let mut id_to_genotype = HashMap::new();
-    resolve_genotypes(&id_to_record, &pos_to_pg_record, &levels, &mut id_to_genotype);
+    resolve_genotypes(full_vcf_path, &decon_id_to_at, &pg_pos_to_gt, &mut id_to_genotype);
     
     Ok(())
 }
