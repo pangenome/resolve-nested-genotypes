@@ -74,6 +74,26 @@ fn get_vcf_gt(record : &record::Record) -> Vec<String> {
     gts
 }
 
+fn infer_gt(child_ats : &Vec<String>, parent_ats : &Vec<String>) -> Vec<String> {
+
+    // to do: need to hook in actual alleles osomrsoim
+    for (i, child_at) in child_ats.iter().enumerate() {
+        let mut par_allele : i32 = -1;
+        for (j, parent_at) in parent_ats.iter().enumerate() {
+            if parent_at.find(child_at).is_some() {
+                par_allele = j;
+                break;
+            }
+        }
+    }
+    vec!["1/1".to_string()]
+}
+
+// build up map of vcf id to genotype
+// top level: get from the pangenie index (looking up by coordinate because ids don't match)
+//            this is based on the assumption that variants are identical between the two vcfs
+// other levels: the id is inferred using the AT fields in the variant and its parent
+//
 fn resolve_genotypes(full_vcf_path : &String,
                      decon_id_to_at : &HashMap<String, Vec<String>>,
                      pg_pos_to_gt : &HashMap<(String, i64), Vec<String>>,
@@ -100,11 +120,33 @@ fn resolve_genotypes(full_vcf_path : &String,
             if res == None {
                 // this site isn't in pangenie, let's see if we can find the parent in
                 // the deconstruct vcf
+                let mut inferred_gt : Vec<String> = Vec::new();
+                match record.info(b"PS").string() {
+                    Ok(ps_opt) => {
+                        match ps_opt {
+                            Some(ps_array) => {
+                                let query = id_to_genotype.get(&*String::from_utf8_lossy(ps_array[0]));
+                                if query.is_some() {
+                                    inferred_gt = infer_gt(&get_vcf_at(&record), &query.unwrap());
+                                    println!("scoop {}", String::from_utf8_lossy(ps_array[0]));
+                                }
+                                
+                            }
+                            None => ()
+                        }
+                    }
+                    Err(_) => ()                        
+                }
+                if inferred_gt.len() == 0 {
+                    println!("Warning: no parent found for ID {}.  Setting to ./.", id_string_cpy);
+                    inferred_gt.push("./.".to_string());
+                }
+                id_to_genotype.insert(id_string_cpy, inferred_gt);
                 println!("Need to look up in decon");
             } else {
                 // the site was loaded form pangenie -- just pull the genotype directly
                 let gts = &res.unwrap();
-                println!("Foind in pangenie: {}", id_string_cpy);
+                println!("Foind in pangenie: {} => {}", id_string_cpy, gts[0]);
                 id_to_genotype.insert(id_string_cpy, gts.to_vec());
             }
         }
