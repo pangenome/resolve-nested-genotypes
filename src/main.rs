@@ -1,6 +1,6 @@
 use rust_htslib::bcf::{Reader, Read, record};
 use std::env;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
     
 // Store ID -> AT for each record in the deconstruct VCF
 fn make_id_to_at_index(vcf_path : &String) -> HashMap<String, Vec<String>> {
@@ -18,7 +18,7 @@ fn make_id_to_at_index(vcf_path : &String) -> HashMap<String, Vec<String>> {
 }
 
 // Store <CHROM,POS> -> GT for each record in the pangenie VCF
-fn make_pos_to_gt_index(vcf_path : &String) -> HashMap<(String, i64), Vec<String>> {
+fn make_pos_to_gt_index(vcf_path : &String) -> HashMap<(String, i64), Vec<Vec<i32>>> {
     let mut pos_to_gt = HashMap::new();
     let mut vcf = Reader::from_path(vcf_path).expect("Error opening VCF");    
     for (_i, record_result) in vcf.records().enumerate() {
@@ -60,8 +60,24 @@ fn get_vcf_at(record : &record::Record) -> Vec<String> {
     at_strings
 }
 
+// parse a string like '0/1' into [0,1]
+// dots get turned into -1
+fn parse_gt(gt_string : &String) -> Vec<i32> {
+    let mut gt_toks : Vec<i32> = Vec::new();
+    for gt_tok in gt_string.split(|c| c == '|' || c == '/') {
+        if gt_tok == "." {
+            gt_toks.push(-1);
+        } else {
+            gt_toks.push(gt_tok.parse::<i32>().unwrap());
+        }        
+    }
+    gt_toks
+}
+
 // get the genotype from the VCF
-fn get_vcf_gt(record : &record::Record) -> Vec<String> {
+// each genotype is s vector of ints (where . -> -1)
+// and an array is returned with one genotype per sample
+fn get_vcf_gt(record : &record::Record) -> Vec<Vec<i32>> {
     let mut gts = Vec::new();
     let genotypes = record.genotypes().expect("Error reading genotypes");
     // todo: support more than one sample
@@ -69,16 +85,63 @@ fn get_vcf_gt(record : &record::Record) -> Vec<String> {
     if num_samples < 1 {
         panic!("no samples!");
     }
-    let sample_gt = genotypes.get(0);
-    gts.push(sample_gt.to_string());
+    for i in 0..num_samples {
+        let sample_gt = genotypes.get(i as usize);
+        gts.push(parse_gt(&sample_gt.to_string()));
+    }
     gts
 }
 
-fn infer_gt(child_ats : &Vec<String>, parent_ats : &Vec<String>) -> Vec<String> {
+// turn something like >1>2>3 into <3<2<1
+fn flip_at(at : &String) -> String {
+    let mut i : usize = 0;
+    let mut at_vec : Vec<String> = Vec::new();
+    while i < at.len() - 1 {
+        let ichar = at.chars().nth(i).unwrap();
+        if ichar != '<' && ichar != '>' {
+            panic!("Unable to parse AT {}", at);
+        }
+        let mut j : usize;
+        match &at[i+1..].find(|c : char| c == '<' || c == '>') {
+            Some(val) => j = *val,
+            None => j = at.len(),
+        }
+        let mut flipped_string : String = String::new();
+        if ichar == '<' {
+            flipped_string.push('>');
+        } else {
+            flipped_string.push('<');
+        }
+        flipped_string.push_str(&at[i+1..j]);
+        at_vec.push(flipped_string);
+    }
+    at_vec.reverse();
+    let mut flipped_at_string : String = String::new();
+    for s in at_vec {
+        flipped_at_string.push_str(&s);
+    }
+    flipped_at_string
+}
 
-    // to do: need to hook in actual alleles osomrsoim
+// given a genotype in the parent snarl, infer a genotype in the child snarl
+// a child allele gets a parent genotype if its traversal is a substring of
+// the parent's traversal.  otherwise it's '.'
+fn infer_gt(child_ats : &Vec<String>,
+            parent_ats : &Vec<String>,
+            parent_gts : &Vec<Vec<i32>>) -> Vec<Vec<i32>> {
+
+    // get every unique parent allele from every sample
+    let mut pgt_set : HashSet<i32> = HashSet::new();
+    for pgt in parent_gts {
+        for allele in pgt {
+            if *allele != -1 {
+                pgt_set.insert(*allele);
+            }
+        }
+    }
+    
     for (i, child_at) in child_ats.iter().enumerate() {
-        let mut par_allele : i32 = -1;
+        let mut par_allele : usize = parent_ats.len();
         for (j, parent_at) in parent_ats.iter().enumerate() {
             if parent_at.find(child_at).is_some() {
                 par_allele = j;
@@ -86,7 +149,8 @@ fn infer_gt(child_ats : &Vec<String>, parent_ats : &Vec<String>) -> Vec<String> 
             }
         }
     }
-    vec!["1/1".to_string()]
+    println!("chid_ats size= {} par={} pgt={}", child_ats.len(), parent_ats.len(), parent_gts.len());
+    vec![vec![1,2]]
 }
 
 // build up map of vcf id to genotype
@@ -96,8 +160,8 @@ fn infer_gt(child_ats : &Vec<String>, parent_ats : &Vec<String>) -> Vec<String> 
 //
 fn resolve_genotypes(full_vcf_path : &String,
                      decon_id_to_at : &HashMap<String, Vec<String>>,
-                     pg_pos_to_gt : &HashMap<(String, i64), Vec<String>>,
-                     id_to_genotype : &mut HashMap<String, Vec<String>>) {
+                     pg_pos_to_gt : &HashMap<(String, i64), Vec<Vec<i32>>>,
+                     id_to_genotype : &mut HashMap<String, Vec<Vec<i32>>>) {
 
     loop {
         let mut vcf = Reader::from_path(full_vcf_path).expect("Error opening VCF");
@@ -120,17 +184,17 @@ fn resolve_genotypes(full_vcf_path : &String,
             if res == None {
                 // this site isn't in pangenie, let's see if we can find the parent in
                 // the deconstruct vcf
-                let mut inferred_gt : Vec<String> = Vec::new();
+                let mut inferred_gt : Vec<Vec<i32>> = Vec::new();
                 match record.info(b"PS").string() {
                     Ok(ps_opt) => {
                         match ps_opt {
                             Some(ps_array) => {
-                                let query = id_to_genotype.get(&*String::from_utf8_lossy(ps_array[0]));
-                                if query.is_some() {
-                                    inferred_gt = infer_gt(&get_vcf_at(&record), &query.unwrap());
+                                let parent_gt = id_to_genotype.get(&*String::from_utf8_lossy(ps_array[0]));
+                                if parent_gt.is_some() {
+                                    let parent_ats = &decon_id_to_at.get(&*String::from_utf8_lossy(ps_array[0])).unwrap();
+                                    inferred_gt = infer_gt(&get_vcf_at(&record), parent_ats, &parent_gt.unwrap());
                                     println!("scoop {}", String::from_utf8_lossy(ps_array[0]));
-                                }
-                                
+                                }                                
                             }
                             None => ()
                         }
@@ -139,14 +203,14 @@ fn resolve_genotypes(full_vcf_path : &String,
                 }
                 if inferred_gt.len() == 0 {
                     println!("Warning: no parent found for ID {}.  Setting to ./.", id_string_cpy);
-                    inferred_gt.push("./.".to_string());
+                    inferred_gt.push(vec![-1,-1]);
                 }
                 id_to_genotype.insert(id_string_cpy, inferred_gt);
                 println!("Need to look up in decon");
             } else {
                 // the site was loaded form pangenie -- just pull the genotype directly
                 let gts = &res.unwrap();
-                println!("Foind in pangenie: {} => {}", id_string_cpy, gts[0]);
+                println!("Foind in pangenie: {} => {:?}", id_string_cpy, gts[0]);
                 id_to_genotype.insert(id_string_cpy, gts.to_vec());
             }
         }
@@ -171,7 +235,7 @@ fn main() -> Result<(), String> {
     
     // this is a map of resolved genotypes
     println!("Resolving genotypes");
-    let mut id_to_genotype = HashMap::new();
+    let mut id_to_genotype : HashMap<String, Vec<Vec<i32>>> = HashMap::new();
     resolve_genotypes(full_vcf_path, &decon_id_to_at, &pg_pos_to_gt, &mut id_to_genotype);
     
     Ok(())
