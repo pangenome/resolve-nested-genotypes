@@ -1,5 +1,5 @@
-use rust_htslib::bcf::{Reader, Read, record};
 use std::env;
+use rust_htslib::bcf::{Reader, Read, record};
 use std::collections::{HashMap, HashSet};
     
 // Store ID -> AT for each record in the deconstruct VCF
@@ -99,11 +99,11 @@ fn flip_at(at : &String) -> String {
     while i < at.len() - 1 {
         let ichar = at.chars().nth(i).unwrap();
         if ichar != '<' && ichar != '>' {
-            panic!("Unable to parse AT {}", at);
+            panic!("Unable to parse AT i={} {}", i, at);
         }
         let mut j : usize;
         match &at[i+1..].find(|c : char| c == '<' || c == '>') {
-            Some(val) => j = *val,
+            Some(val) => j = *val + i + 1,
             None => j = at.len(),
         }
         let mut flipped_string : String = String::new();
@@ -114,6 +114,7 @@ fn flip_at(at : &String) -> String {
         }
         flipped_string.push_str(&at[i+1..j]);
         at_vec.push(flipped_string);
+        i = j;
     }
     at_vec.reverse();
     let mut flipped_at_string : String = String::new();
@@ -131,26 +132,47 @@ fn infer_gt(child_ats : &Vec<String>,
             parent_gts : &Vec<Vec<i32>>) -> Vec<Vec<i32>> {
 
     // get every unique parent allele from every sample
-    let mut pgt_set : HashSet<i32> = HashSet::new();
+    let mut pa_set : HashSet<i32> = HashSet::new();
     for pgt in parent_gts {
         for allele in pgt {
             if *allele != -1 {
-                pgt_set.insert(*allele);
+                pa_set.insert(*allele);
             }
         }
     }
-    
-    for (i, child_at) in child_ats.iter().enumerate() {
-        let mut par_allele : usize = parent_ats.len();
-        for (j, parent_at) in parent_ats.iter().enumerate() {
-            if parent_at.find(child_at).is_some() {
-                par_allele = j;
+
+    // get the reverse complement child traversals
+    let mut child_rev_ats : Vec<String> = Vec::new();
+    for child_at in child_ats {
+        child_rev_ats.push(flip_at(child_at));
+    }
+
+    // try to find a child allele for every parent allele, using string comparisons on the traversals
+    let mut pa_to_ca : HashMap<i32, i32> = HashMap::new(); // todo: merge with set above
+    for pa in pa_set {
+        let p_at : &String = &parent_ats[pa as usize];
+        for ca in 0..child_ats.len() {
+            if p_at.find(&child_ats[ca]).is_some() ||  p_at.find(&child_rev_ats[ca]).is_some() {
+                pa_to_ca.insert(pa, ca as i32);
                 break;
             }
         }
+        if !pa_to_ca.contains_key(&pa) {
+            pa_to_ca.insert(pa, -1);
+        }
     }
-    println!("chid_ats size= {} par={} pgt={}", child_ats.len(), parent_ats.len(), parent_gts.len());
-    vec![vec![1,2]]
+
+    // now that we have the allele map, fill in genotypes for the child
+    let mut child_gts : Vec<Vec<i32>> = Vec::new();
+    for parent_gt in parent_gts {
+        let mut child_gt : Vec<i32> = Vec::new();
+        for pa in parent_gt {
+            child_gt.push(*pa_to_ca.get(pa).unwrap());
+        }
+        child_gts.push(child_gt);
+    }
+    println!("parent_gts {:?} ==> child_gts {:?}", parent_gts, child_gts);
+    child_gts
 }
 
 // build up map of vcf id to genotype
