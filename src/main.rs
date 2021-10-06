@@ -125,6 +125,9 @@ fn flip_at(at : &String) -> String {
         
         i = j - 1;
     }
+    if flipped_string.len() != at.len() {
+        panic!("Error flipping {}", at);
+    }
     flipped_string
 }
 
