@@ -93,6 +93,7 @@ fn get_vcf_gt(record : &record::Record) -> Vec<Vec<i32>> {
 }
 
 // turn something like >1>2>3 into <3<2<1
+// todo: this function seems to be the main bottleneck for giant sites
 fn flip_at(at : &String) -> String {
     let mut i : usize = 0;
     let mut at_vec : Vec<String> = Vec::new();
@@ -149,6 +150,7 @@ fn infer_gt(child_ats : &Vec<String>,
 
     // try to find a child allele for every parent allele, using string comparisons on the traversals
     let mut pa_to_ca : HashMap<i32, i32> = HashMap::new(); // todo: merge with set above
+    pa_to_ca.insert(-1, -1);
     for pa in pa_set {
         let p_at : &String = &parent_ats[pa as usize];
         for ca in 0..child_ats.len() {
@@ -171,7 +173,6 @@ fn infer_gt(child_ats : &Vec<String>,
         }
         child_gts.push(child_gt);
     }
-    println!("parent_gts {:?} ==> child_gts {:?}", parent_gts, child_gts);
     child_gts
 }
 
@@ -184,7 +185,9 @@ fn resolve_genotypes(full_vcf_path : &String,
                      pg_pos_to_gt : &HashMap<(String, i64), Vec<Vec<i32>>>,
                      id_to_genotype : &mut HashMap<String, Vec<Vec<i32>>>) {
 
+    let mut loop_count : i32 = 0;
     loop {
+        println!("Resolving genotypes [iteration={}]", loop_count);
         let mut vcf = Reader::from_path(full_vcf_path).expect("Error opening VCF");
         let mut added_count : u64 = 0;
         for (_i, record_result) in vcf.records().enumerate() {
@@ -214,7 +217,6 @@ fn resolve_genotypes(full_vcf_path : &String,
                                 if parent_gt.is_some() {
                                     let parent_ats = &decon_id_to_at.get(&*String::from_utf8_lossy(ps_array[0])).unwrap();
                                     inferred_gt = infer_gt(&get_vcf_at(&record), parent_ats, &parent_gt.unwrap());
-                                    println!("scoop {}", String::from_utf8_lossy(ps_array[0]));
                                 }                                
                             }
                             None => ()
@@ -227,17 +229,17 @@ fn resolve_genotypes(full_vcf_path : &String,
                     inferred_gt.push(vec![-1,-1]);
                 }
                 id_to_genotype.insert(id_string_cpy, inferred_gt);
-                println!("Need to look up in decon");
             } else {
                 // the site was loaded form pangenie -- just pull the genotype directly
                 let gts = &res.unwrap();
-                println!("Foind in pangenie: {} => {:?}", id_string_cpy, gts[0]);
                 id_to_genotype.insert(id_string_cpy, gts.to_vec());
             }
         }
+        println!("   resolved {} sites", added_count);
         if added_count == 0 {
             break;
         }
+        loop_count += 1;
     }
 }
 
@@ -271,7 +273,11 @@ fn write_resolved_vcf(full_vcf_path : &String,
         let found_gt = id_to_genotype.get(&*String::from_utf8_lossy(&out_record.id())).expect("ID not found in map");
         for sample_gt in found_gt {
             for gt_allele in sample_gt {
-                gt_vec.push(record::GenotypeAllele::Unphased(*gt_allele));
+                if *gt_allele == -1 {
+                    gt_vec.push(record::GenotypeAllele::UnphasedMissing);
+                } else {
+                    gt_vec.push(record::GenotypeAllele::Unphased(*gt_allele));
+                }
             }
         }
         out_record.push_genotypes(&gt_vec).expect("Could not set GT");
@@ -295,7 +301,6 @@ fn main() -> Result<(), String> {
     
     // this is a map of resolved genotypes
     let mut id_to_genotype : HashMap<String, Vec<Vec<i32>>> = HashMap::new();
-    println!("Resolving genotypes");
     resolve_genotypes(full_vcf_path, &decon_id_to_at, &pg_pos_to_gt, &mut id_to_genotype);
 
     // print out the deconstructed VCF but with the genotyped samples

@@ -56,12 +56,12 @@ cd resolve-nested-genotypes
 
 Build with Rust
 ```
-cargo build
+cargo build --release 
 ```
 
 ### Running
 
-`target/debug/resolve-nested-genotypes <deconstructed VCF> <genotyped VCF>`
+`target/release/resolve-nested-genotypes <deconstructed VCF> <genotyped VCF>`
 
 Note that sites in the `<genotyped VCF>` must have the exact same alleles in the exact same order as sites in the deconstructed VCF.  Only the coordinates are used to map between the two files, so inconsistencies may not be caught.  `<genotyped VCF>` does not need the same IDs or INFO fields. 
 
