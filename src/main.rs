@@ -1,6 +1,7 @@
 use std::env;
 use rust_htslib::bcf::{Reader, Writer, Read, record, Header, Format};
 use std::collections::{HashMap, HashSet};
+use indicatif::ProgressBar;
     
 // Store ID -> AT for each record in the deconstruct VCF
 fn make_id_to_at_index(vcf_path : &String) -> HashMap<String, Vec<String>> {
@@ -185,38 +186,49 @@ fn resolve_genotypes(full_vcf_path : &String,
                      pg_pos_to_gt : &HashMap<(String, i64), Vec<Vec<i32>>>,
                      id_to_genotype : &mut HashMap<String, Vec<Vec<i32>>>) {
 
+    let mut added_count_total : u64 = 0;
     let mut loop_count : i32 = 0;
     loop {
         eprintln!("Resolving genotypes [iteration={}]", loop_count);
         let mut vcf = Reader::from_path(full_vcf_path).expect("Error opening VCF");
         let mut added_count : u64 = 0;
+        let mut unresolved_ids : Vec<String> = Vec::new();
+        let bar = ProgressBar::new(decon_id_to_at.len() as u64);
         for (_i, record_result) in vcf.records().enumerate() {
             let record = record_result.expect("Fail to read record");
             let record_id = &record.id();
             let id_string = String::from_utf8_lossy(record_id);
-            let id_string_cpy = (*id_string).to_string();
-            if id_to_genotype.contains_key(&id_string_cpy) {
+            if id_to_genotype.contains_key(&*id_string) {
                 // added in previous iteration
+                bar.inc(1);
                 continue;
-            } 
-            added_count += 1;
+            }
+            let id_string_cpy = (*id_string).to_string();
             let rid = record.rid().unwrap();
             let chrom = record.header().rid2name(rid).expect("unable to confird rid to chrom");
             let chrom_string = String::from_utf8_lossy(chrom);
             let chrom_string_cpy = (*chrom_string).to_string();
             let res = pg_pos_to_gt.get(&(chrom_string_cpy, record.pos()));
-            if res == None {
+            let mut gt_found : bool = res != None;
+            if gt_found == true {
+                // the site was loaded form pangenie -- just pull the genotype directly
+                let gts = &res.unwrap();
+                id_to_genotype.insert(id_string_cpy, gts.to_vec());
+            } else {
                 // this site isn't in pangenie, let's see if we can find the parent in
                 // the deconstruct vcf
                 let mut inferred_gt : Vec<Vec<i32>> = Vec::new();
+                let mut parent_found : bool = false;                
                 match record.info(b"PS").string() {
                     Ok(ps_opt) => {
                         match ps_opt {
                             Some(ps_array) => {
+                                parent_found = true;
                                 let parent_gt = id_to_genotype.get(&*String::from_utf8_lossy(ps_array[0]));
                                 if parent_gt.is_some() {
                                     let parent_ats = &decon_id_to_at.get(&*String::from_utf8_lossy(ps_array[0])).unwrap();
                                     inferred_gt = infer_gt(&get_vcf_at(&record), parent_ats, &parent_gt.unwrap());
+                                    gt_found = true;
                                 }                                
                             }
                             None => ()
@@ -224,19 +236,34 @@ fn resolve_genotypes(full_vcf_path : &String,
                     }
                     Err(_) => ()                        
                 }
-                if inferred_gt.len() == 0 {
-                    eprintln!("Warning: no parent found for ID {}.  Setting to ./.", id_string_cpy);
+                if parent_found == false {
+                    // no hope of ever genotyping this site if it doesn't have a genotype already and doesn't have a parent record
+                    // in the deconstruct vcf.  (this should never happene on the full deconstruct vcf, but could on a subset)
+                    eprintln!("Warning: Top-level (no PS tag) site not present in genotyped vcf (ID {}).  Setting to ./.", id_string_cpy);
                     inferred_gt.push(vec![-1,-1]);
+                    gt_found = true;
                 }
-                id_to_genotype.insert(id_string_cpy, inferred_gt);
-            } else {
-                // the site was loaded form pangenie -- just pull the genotype directly
-                let gts = &res.unwrap();
-                id_to_genotype.insert(id_string_cpy, gts.to_vec());
+                if gt_found {
+                    id_to_genotype.insert(id_string_cpy, inferred_gt);
+                }
             }
+            if gt_found {
+                added_count += 1;
+            } else {
+                let id_string_cpy = (*id_string).to_string(); // not necessary but rustc can't figure it out
+                unresolved_ids.push(id_string_cpy);
+            }
+            bar.inc(1);
         }
+        bar.finish();
+        added_count_total += added_count;
         eprintln!("   resolved {} sites", added_count);
-        if added_count == 0 {
+        if added_count == 0 || added_count_total == decon_id_to_at.len() as u64 {
+            for unresolved_id in unresolved_ids {
+                // is this a bug?
+                eprintln!("Warning: unable to resolve genotye for ID {}. Setting to ./.", unresolved_id);
+                id_to_genotype.insert(unresolved_id, vec![vec![-1,-1]]);
+            }
             break;
         }
         loop_count += 1;
