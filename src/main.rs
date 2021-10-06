@@ -187,7 +187,7 @@ fn resolve_genotypes(full_vcf_path : &String,
 
     let mut loop_count : i32 = 0;
     loop {
-        println!("Resolving genotypes [iteration={}]", loop_count);
+        eprintln!("Resolving genotypes [iteration={}]", loop_count);
         let mut vcf = Reader::from_path(full_vcf_path).expect("Error opening VCF");
         let mut added_count : u64 = 0;
         for (_i, record_result) in vcf.records().enumerate() {
@@ -225,7 +225,7 @@ fn resolve_genotypes(full_vcf_path : &String,
                     Err(_) => ()                        
                 }
                 if inferred_gt.len() == 0 {
-                    println!("Warning: no parent found for ID {}.  Setting to ./.", id_string_cpy);
+                    eprintln!("Warning: no parent found for ID {}.  Setting to ./.", id_string_cpy);
                     inferred_gt.push(vec![-1,-1]);
                 }
                 id_to_genotype.insert(id_string_cpy, inferred_gt);
@@ -235,7 +235,7 @@ fn resolve_genotypes(full_vcf_path : &String,
                 id_to_genotype.insert(id_string_cpy, gts.to_vec());
             }
         }
-        println!("   resolved {} sites", added_count);
+        eprintln!("   resolved {} sites", added_count);
         if added_count == 0 {
             break;
         }
@@ -292,11 +292,11 @@ fn main() -> Result<(), String> {
     let pg_vcf_path = &args[2];
 
     // index the full vcf from deconstruct (it must contain all the levels and annotations)
-    println!("Indexing deconstruct VCF ATs by ID: {}", full_vcf_path);
+    eprintln!("Indexing deconstruct VCF ATs by ID: {}", full_vcf_path);
     let decon_id_to_at = make_id_to_at_index(full_vcf_path);
 
     // index the pangenie vcf.  its id's aren't consistent so we use coordinates instead
-    println!("Indexing pangenie VCF GTs by position: {}", pg_vcf_path);
+    eprintln!("Indexing pangenie VCF GTs by position: {}", pg_vcf_path);
     let pg_pos_to_gt = make_pos_to_gt_index(pg_vcf_path);
     
     // this is a map of resolved genotypes
