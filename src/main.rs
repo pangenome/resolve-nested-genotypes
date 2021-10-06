@@ -94,36 +94,38 @@ fn get_vcf_gt(record : &record::Record) -> Vec<Vec<i32>> {
 }
 
 // turn something like >1>2>3 into <3<2<1
-// todo: this function seems to be the main bottleneck for giant sites
+// todo: i think i should be using byte arrays through instead of strings
+// which is what the vcf api is doing...
 fn flip_at(at : &String) -> String {
-    let mut i : usize = 0;
-    let mut at_vec : Vec<String> = Vec::new();
-    while i < at.len() - 1 {
-        let ichar = at.chars().nth(i).unwrap();
-        if ichar != '<' && ichar != '>' {
-            panic!("Unable to parse AT i={} {}", i, at);
+    let mut flipped_string : String = String::new();
+    flipped_string.reserve_exact(at.len());
+    let at_bytes = &at.as_bytes();
+    
+    let mut i : i64 = at.len() as i64 - 1;
+    while i >= 0 {
+        // i : last char of step
+        // j : first char of step (< or >)
+        let mut j : i64 = i - 1;
+        while j >= 0 && at_bytes[j as usize] != b'>' && at_bytes[j as usize] != b'<' {
+            j -= 1;
         }
-        let mut j : usize;
-        match &at[i+1..].find(|c : char| c == '<' || c == '>') {
-            Some(val) => j = *val + i + 1,
-            None => j = at.len(),
+
+        if j >= i || (at_bytes[j as usize] != b'>' && at_bytes[j as usize] != b'<') {
+            panic!("Unable to parse AT i={} j={} {}", i, j, at);
         }
-        let mut flipped_string : String = String::new();
-        if ichar == '<' {
-            flipped_string.push('>');
-        } else {
+        
+        if at_bytes[j as usize] == b'>' {
             flipped_string.push('<');
+        } else {
+            flipped_string.push('>');
         }
-        flipped_string.push_str(&at[i+1..j]);
-        at_vec.push(flipped_string);
-        i = j;
+        for k in j+1..i+1 {
+            flipped_string.push(at.chars().nth(k as usize).unwrap());
+        }
+        
+        i = j - 1;
     }
-    at_vec.reverse();
-    let mut flipped_at_string : String = String::new();
-    for s in at_vec {
-        flipped_at_string.push_str(&s);
-    }
-    flipped_at_string
+    flipped_string
 }
 
 // given a genotype in the parent snarl, infer a genotype in the child snarl
@@ -186,6 +188,18 @@ fn resolve_genotypes(full_vcf_path : &String,
                      pg_pos_to_gt : &HashMap<(String, i64), Vec<Vec<i32>>>,
                      id_to_genotype : &mut HashMap<String, Vec<Vec<i32>>>) {
 
+    // get a null genotype that we'll assign to stuff we don't resolve    
+    // todo: clean this
+    let mut num_samples : u64 = 1;
+    match id_to_genotype.values().next() {
+        Some(val) => num_samples = val.len() as u64,
+        None => ()
+    }
+    let mut null_gt : Vec<Vec<i32>> = Vec::new();
+    for _i in 0..num_samples {
+        null_gt.push(vec![-1,-1]);
+    }
+    
     let mut added_count_total : u64 = 0;
     let mut loop_count : i32 = 0;
     loop {
@@ -240,7 +254,7 @@ fn resolve_genotypes(full_vcf_path : &String,
                     // no hope of ever genotyping this site if it doesn't have a genotype already and doesn't have a parent record
                     // in the deconstruct vcf.  (this should never happene on the full deconstruct vcf, but could on a subset)
                     eprintln!("Warning: Top-level (no PS tag) site not present in genotyped vcf (ID {}).  Setting to ./.", id_string_cpy);
-                    inferred_gt.push(vec![-1,-1]);
+                    inferred_gt = null_gt.clone();
                     gt_found = true;
                 }
                 if gt_found {
@@ -260,9 +274,8 @@ fn resolve_genotypes(full_vcf_path : &String,
         eprintln!("   resolved {} sites", added_count);
         if added_count == 0 || added_count_total == decon_id_to_at.len() as u64 {
             for unresolved_id in unresolved_ids {
-                // is this a bug?
                 eprintln!("Warning: unable to resolve genotye for ID {}. Setting to ./.", unresolved_id);
-                id_to_genotype.insert(unresolved_id, vec![vec![-1,-1]]);
+                id_to_genotype.insert(unresolved_id, null_gt.clone());
             }
             break;
         }
@@ -335,6 +348,7 @@ fn main() -> Result<(), String> {
     resolve_genotypes(full_vcf_path, &decon_id_to_at, &pg_pos_to_gt, &mut id_to_genotype);
 
     // print out the deconstructed VCF but with the genotyped samples
+    eprintln!("Writing output");
     write_resolved_vcf(full_vcf_path, pg_vcf_path, &id_to_genotype);
     
     Ok(())

@@ -9,7 +9,7 @@ resolve-nested-genotypes
 ##INFO=<ID=PS,Number=1,Type=String,Description=\"ID of variant corresponding to parent snarl
 ```
 
-Given genotype for a subset of sites from such a VCF, this tool uses these INFO fields to propagate the genotypes down to child sites of the genotyped sites.  For example, consider these two sites from the deconstructed VCF, where the second is nested inside the first. 
+Given genotypes for a subset of sites from such a VCF, this tool uses these INFO fields to propagate the genotypes down to child sites of the genotyped sites.  For example, consider these two sites from the deconstructed VCF, where the second is nested inside the first. 
 
 ```
 GRCh38.chr20	139949	>73154428>73154433	AAAGTC	A,AAAGAC	60	.	AC=3,1;AF=0.0337079,0.011236;AN=89;AT=>73154428>73154429>73154430>73154432>73154433,>73154428>73154433,>73154428>73154429<73154431>73154432>73154433;LV=0;
@@ -68,5 +68,6 @@ Note that sites in the `<genotyped VCF>` must have the exact same alleles in the
 ### About
 
 Author: Glenn Hickey
+
 Licence: [MIT](LICENCE)
 
