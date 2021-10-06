@@ -288,6 +288,10 @@ fn write_resolved_vcf(full_vcf_path : &String,
 fn main() -> Result<(), String> {
 
 	 let args: Vec<String> = env::args().collect();
+    if args.len() != 3 {
+        eprintln!("Usage: {} <deconstruct vcf> <genotype subset vcf>", &args[0]);
+        std::process::exit(1);
+    }
 	 let full_vcf_path = &args[1];
     let pg_vcf_path = &args[2];
 
@@ -296,7 +300,7 @@ fn main() -> Result<(), String> {
     let decon_id_to_at = make_id_to_at_index(full_vcf_path);
 
     // index the pangenie vcf.  its id's aren't consistent so we use coordinates instead
-    eprintln!("Indexing pangenie VCF GTs by position: {}", pg_vcf_path);
+    eprintln!("Indexing genotyped VCF GTs by position: {}", pg_vcf_path);
     let pg_pos_to_gt = make_pos_to_gt_index(pg_vcf_path);
     
     // this is a map of resolved genotypes
