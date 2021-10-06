@@ -119,9 +119,7 @@ fn flip_at(at : &String) -> String {
         } else {
             flipped_string.push('>');
         }
-        for k in j+1..i+1 {
-            flipped_string.push(at.chars().nth(k as usize).unwrap());
-        }
+        flipped_string.push_str(&at[(j as usize)+1..(i as usize)+1]);
         
         i = j - 1;
     }
