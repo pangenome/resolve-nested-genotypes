@@ -1,5 +1,5 @@
 use std::env;
-use rust_htslib::bcf::{Reader, Read, record};
+use rust_htslib::bcf::{Reader, Writer, Read, record, Header, Format};
 use std::collections::{HashMap, HashSet};
     
 // Store ID -> AT for each record in the deconstruct VCF
@@ -47,7 +47,7 @@ fn get_vcf_level(record : &record::Record) -> i32 {
     lv_int
 }
 
-// extract the at from the vcf
+// extract the AT from the vcf
 fn get_vcf_at(record : &record::Record) -> Vec<String> {
     let at_info = record.info(b"AT");
     let mut at_strings = Vec::new();
@@ -179,7 +179,6 @@ fn infer_gt(child_ats : &Vec<String>,
 // top level: get from the pangenie index (looking up by coordinate because ids don't match)
 //            this is based on the assumption that variants are identical between the two vcfs
 // other levels: the id is inferred using the AT fields in the variant and its parent
-//
 fn resolve_genotypes(full_vcf_path : &String,
                      decon_id_to_at : &HashMap<String, Vec<String>>,
                      pg_pos_to_gt : &HashMap<(String, i64), Vec<Vec<i32>>>,
@@ -242,6 +241,44 @@ fn resolve_genotypes(full_vcf_path : &String,
     }
 }
 
+// scan the deconstructed VCF and print it to stdout, but with the resolved genotypes
+fn write_resolved_vcf(full_vcf_path : &String,
+                      pg_vcf_path : &String,
+                      id_to_genotype : &HashMap<String, Vec<Vec<i32>>>) {
+
+    // we get the samples from the pg vcf
+    let pg_vcf = Reader::from_path(pg_vcf_path).expect("Error opening VCF");
+    let pg_samples = pg_vcf.header().samples();
+
+    // we write in terms of the original vcf
+    // todo: it would be nice to carry over GQ and other fields of interest
+    let mut in_vcf = Reader::from_path(full_vcf_path).expect("Error opening VCF");
+    let in_header = in_vcf.header();
+    let mut out_header = Header::from_template_subset(in_header, &[]).unwrap();
+    for pg_sample in pg_samples {
+        out_header.push_sample(pg_sample);
+    }
+    let mut out_vcf = Writer::from_stdout(&out_header, true, Format::Vcf).unwrap();
+    for (_i, record_result) in in_vcf.records().enumerate() {
+        let in_record = record_result.expect("Fail to read record");
+        // todo: could be faster to edit in_record in place?  probably doesn't make much difference either way
+        let mut out_record = out_vcf.empty_record();
+        out_record.set_rid(in_record.rid());
+        out_record.set_pos(in_record.pos());
+        out_record.set_id(&in_record.id()).expect("Could not set ID");
+        out_record.set_alleles(&in_record.alleles()).expect("Could not set alleles");
+        let mut gt_vec : Vec<record::GenotypeAllele> = Vec::new();
+        let found_gt = id_to_genotype.get(&*String::from_utf8_lossy(&out_record.id())).expect("ID not found in map");
+        for sample_gt in found_gt {
+            for gt_allele in sample_gt {
+                gt_vec.push(record::GenotypeAllele::Unphased(*gt_allele));
+            }
+        }
+        out_record.push_genotypes(&gt_vec).expect("Could not set GT");
+        out_vcf.write(&out_record).unwrap();
+    }
+}
+
 fn main() -> Result<(), String> {
 
 	 let args: Vec<String> = env::args().collect();
@@ -251,14 +288,18 @@ fn main() -> Result<(), String> {
     // index the full vcf from deconstruct (it must contain all the levels and annotations)
     println!("Indexing deconstruct VCF ATs by ID: {}", full_vcf_path);
     let decon_id_to_at = make_id_to_at_index(full_vcf_path);
+
     // index the pangenie vcf.  its id's aren't consistent so we use coordinates instead
     println!("Indexing pangenie VCF GTs by position: {}", pg_vcf_path);
     let pg_pos_to_gt = make_pos_to_gt_index(pg_vcf_path);
     
     // this is a map of resolved genotypes
-    println!("Resolving genotypes");
     let mut id_to_genotype : HashMap<String, Vec<Vec<i32>>> = HashMap::new();
+    println!("Resolving genotypes");
     resolve_genotypes(full_vcf_path, &decon_id_to_at, &pg_pos_to_gt, &mut id_to_genotype);
+
+    // print out the deconstructed VCF but with the genotyped samples
+    write_resolved_vcf(full_vcf_path, pg_vcf_path, &id_to_genotype);
     
     Ok(())
 }
