@@ -273,10 +273,12 @@ fn resolve_genotypes(full_vcf_path : &String,
         added_count_total += added_count;
         eprintln!("   resolved {} sites", added_count);
         if added_count == 0 || added_count_total == decon_id_to_at.len() as u64 {
+            let unresolved_count = unresolved_ids.len();
             for unresolved_id in unresolved_ids {
-                eprintln!("Warning: unable to resolve genotye for ID {}. Setting to ./.", unresolved_id);
+                eprintln!("Warning: unable to resolve genotype for ID {}. Setting to ./.", unresolved_id);
                 id_to_genotype.insert(unresolved_id, null_gt.clone());
             }
+            eprintln!("Resolved genotypes for {} / {} sites", decon_id_to_at.len() - unresolved_count, decon_id_to_at.len());
             break;
         }
         loop_count += 1;
