@@ -313,6 +313,10 @@ fn write_resolved_vcf(full_vcf_path : &String,
     let mut in_vcf = Reader::from_path(full_vcf_path).expect("Error opening VCF");
     let in_header = in_vcf.header();
     let mut out_header = Header::from_template_subset(in_header, &[]).unwrap();
+    const REMOVE_TAGS : &'static [&'static str] = &["CONFLICT", "AC", "AF", "NS", "AN", "AT"];
+    for info_tag in REMOVE_TAGS {
+        out_header.remove_info(info_tag.as_bytes());
+    }    
     for pg_sample in pg_samples {
         out_header.push_sample(pg_sample);
     }
