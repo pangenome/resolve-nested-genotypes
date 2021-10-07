@@ -48,6 +48,19 @@ fn get_vcf_level(record : &record::Record) -> i32 {
     lv_int
 }
 
+// extract a copy of the ps
+fn get_vcf_ps(record : &record::Record) -> Option<String> {
+    match record.info(b"PS").string() {
+        Ok(ps_opt) => {
+            match ps_opt {
+                Some(ps_array) => Some(String::from_utf8_lossy(&*ps_array[0]).to_string()),
+                None => None,
+            }
+        },
+        Err(_) => None,
+    }
+}
+
 // extract the AT from the vcf
 fn get_vcf_at(record : &record::Record) -> Vec<String> {
     let at_info = record.info(b"AT");
@@ -312,6 +325,11 @@ fn write_resolved_vcf(full_vcf_path : &String,
         out_record.set_pos(in_record.pos());
         out_record.set_id(&in_record.id()).expect("Could not set ID");
         out_record.set_alleles(&in_record.alleles()).expect("Could not set alleles");
+        out_record.push_info_integer(b"LV", &[get_vcf_level(&in_record)]).expect("Could not set LV");
+        match get_vcf_ps(&in_record) {
+            Some(ps_string) => out_record.push_info_string(b"PS", &[ps_string.as_bytes()]).expect("Could not set PS"),
+            None => (),
+        };
         let mut gt_vec : Vec<record::GenotypeAllele> = Vec::new();
         let found_gt = id_to_genotype.get(&*String::from_utf8_lossy(&out_record.id())).expect("ID not found in map");
         for sample_gt in found_gt {
