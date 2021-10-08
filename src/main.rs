@@ -2,7 +2,8 @@ use std::env;
 use rust_htslib::bcf::{Reader, Writer, Read, record, Header, Format};
 use std::collections::{HashMap, HashSet};
 use indicatif::ProgressBar;
-    
+mod snarl_tree;
+
 // Store ID -> AT for each record in the deconstruct VCF
 fn make_id_to_at_index(vcf_path : &String) -> HashMap<String, Vec<String>> {
     let mut id_to_at = HashMap::new();
