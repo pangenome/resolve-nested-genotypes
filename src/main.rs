@@ -17,7 +17,7 @@ fn make_id_to_at_index(vcf_path : &String) -> (HashMap<String, Vec<String>>, Sna
         let id_string_cpy = (*id_string).to_string();
         let at_strings = get_vcf_at(&record);
         id_to_at.insert(id_string_cpy, at_strings);
-        snarl_forest.add_id(&*id_string, get_vcf_ps(&record));
+        snarl_forest.add_id(&*id_string, Some(get_hprc_id(&record)), get_vcf_ps(&record));
     }
     snarl_forest.calculate_roots();
     (id_to_at, snarl_forest)
@@ -77,6 +77,61 @@ fn get_vcf_at(record : &record::Record) -> Vec<String> {
         at_strings.push(s);
     }
     at_strings
+}
+
+// make up a hprc id
+//
+// quoting Jana:
+//
+// The ID field contains one ID per alternative allele. If an allele contains nested alleles, its ID is composed of a sequence of IDs of the lowest level alleles, separated by “:” (see first ALT allele in example above)
+
+// The IDs itself are unique, for HGSVC we defined them based on the following pattern: 
+// <chrom>-<allele start>-<type>-<REF>-<ALT> (for SNV only) 
+// <chrom>-<allele start>-<type>-<count>-<allele length>  (for other variant types: INS, DEL, COMPLEX)
+//
+// deconstructed VCfs aren't going to fit this mold terribly well (big multiallele sites even in leaves) but we do our best
+// it may make more sense just to use snarl ids?
+fn get_hprc_id(record : &record::Record) -> String {
+    let mut hprc_id = String::new();
+    let alleles = &record.alleles();
+    let mut stype = String::new();
+    if alleles.len() == 2 {
+        if alleles[0].len() == 1 && alleles[1].len() == 1 {
+            stype = "SNV".to_string();
+        } else if alleles[0].len() == 1 && alleles[1].len() > 1 && alleles[0][0] == alleles[1][0] {
+            stype = "INS".to_string();
+        } else if alleles[0].len() > 1 && alleles[1].len() == 1 && alleles[0][0] == alleles[1][0] {
+            stype = "DEL".to_string();
+        }
+    }
+    if stype.len() == 0 {
+        stype = "COMPLEX".to_string();
+    }
+
+    let rid = record.rid().unwrap();
+    let chrom = record.header().rid2name(rid).expect("unable to confird rid to chrom");
+    let chrom_string = String::from_utf8_lossy(chrom);
+    hprc_id.push_str(&chrom_string);
+    hprc_id.push('-');
+    hprc_id.push_str(&record.pos().to_string());
+    hprc_id.push('-');
+    hprc_id.push_str(&stype);
+    if stype == "SNV" {
+        hprc_id.push(alleles[0][0] as char);
+        hprc_id.push('-');
+        hprc_id.push(alleles[1][0] as char);
+    } else {
+        // count always set to 0 because deconstruct makes one allel per site
+        hprc_id.push_str("-0-");
+        let mut allele_len = 0;
+        for allele in alleles {
+            if allele.len() > allele_len {
+                allele_len = allele.len();
+            }
+        }
+        hprc_id.push_str(&allele_len.to_string());
+    }
+    hprc_id
 }
 
 // parse a string like '0/1' into [0,1]
@@ -307,7 +362,8 @@ fn resolve_genotypes(full_vcf_path : &String,
 // scan the deconstructed VCF and print it to stdout, but with the resolved genotypes
 fn write_resolved_vcf(full_vcf_path : &String,
                       pg_vcf_path : &String,
-                      id_to_genotype : &HashMap<String, Vec<Vec<i32>>>) {
+                      id_to_genotype : &HashMap<String, Vec<Vec<i32>>>,
+                      snarl_forest : &SnarlForest) {
 
     // we get the samples from the pg vcf
     let pg_vcf = Reader::from_path(pg_vcf_path).expect("Error opening VCF");
@@ -321,7 +377,8 @@ fn write_resolved_vcf(full_vcf_path : &String,
     const REMOVE_TAGS : &'static [&'static str] = &["CONFLICT", "AC", "AF", "NS", "AN", "AT"];
     for info_tag in REMOVE_TAGS {
         out_header.remove_info(info_tag.as_bytes());
-    }    
+    }
+    out_header.push_record(b"##INFO=<ID=ID,Number=1,Type=String,Description=\"Colon-spearated list of leaf HGDVC-style IDs\"");
     for pg_sample in pg_samples {
         out_header.push_sample(pg_sample);
     }
@@ -339,6 +396,8 @@ fn write_resolved_vcf(full_vcf_path : &String,
             Some(ps_string) => out_record.push_info_string(b"PS", &[ps_string.as_bytes()]).expect("Could not set PS"),
             None => (),
         };
+        let hprc_id = snarl_forest.get_hprc_id(&String::from_utf8_lossy(&in_record.id()));
+        out_record.push_info_string(b"ID", &vec![hprc_id.as_bytes()]).expect("Could not set ID");
         let mut gt_vec : Vec<record::GenotypeAllele> = Vec::new();
         let found_gt = id_to_genotype.get(&*String::from_utf8_lossy(&out_record.id())).expect("ID not found in map");
         for sample_gt in found_gt {
@@ -367,7 +426,7 @@ fn main() -> Result<(), String> {
 
     // index the full vcf from deconstruct (it must contain all the levels and annotations)
     eprintln!("Indexing deconstruct VCF ATs by ID: {}", full_vcf_path);
-    let decon_id_to_at = make_id_to_at_index(full_vcf_path).0;
+    let (decon_id_to_at, snarl_forest) = make_id_to_at_index(full_vcf_path);
 
     // index the pangenie vcf.  its id's aren't consistent so we use coordinates instead
     eprintln!("Indexing genotyped VCF GTs by position: {}", pg_vcf_path);
@@ -379,7 +438,7 @@ fn main() -> Result<(), String> {
 
     // print out the deconstructed VCF but with the genotyped samples
     eprintln!("Writing output");
-    write_resolved_vcf(full_vcf_path, pg_vcf_path, &id_to_genotype);
+    write_resolved_vcf(full_vcf_path, pg_vcf_path, &id_to_genotype, &snarl_forest);
     
     Ok(())
 }
