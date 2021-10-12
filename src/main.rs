@@ -117,6 +117,7 @@ fn get_hprc_id(record : &record::Record) -> String {
     hprc_id.push('-');
     hprc_id.push_str(&stype);
     if stype == "SNV" {
+        hprc_id.push('-');
         hprc_id.push(alleles[0][0] as char);
         hprc_id.push('-');
         hprc_id.push(alleles[1][0] as char);
@@ -378,7 +379,7 @@ fn write_resolved_vcf(full_vcf_path : &String,
     for info_tag in REMOVE_TAGS {
         out_header.remove_info(info_tag.as_bytes());
     }
-    out_header.push_record(b"##INFO=<ID=ID,Number=1,Type=String,Description=\"Colon-spearated list of leaf HGDVC-style IDs\"");
+    out_header.push_record(b"##INFO=<ID=ID,Number=1,Type=String,Description=\"Colon-separated list of leaf HGSVC-style IDs\"");
     for pg_sample in pg_samples {
         out_header.push_sample(pg_sample);
     }

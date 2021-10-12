@@ -9,7 +9,7 @@ pub struct SnarlForest {
     root_nos : HashSet<usize>,
     to_parent : HashMap<usize, usize>,
     to_children : HashMap<usize, Vec<usize>>,
-    no_to_hprc_id : HashMap<usize, String>,
+    no_to_hprc_id : HashMap<usize, String>, // todo: oops should be vec
 }
 
 impl SnarlForest {
