@@ -4,9 +4,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 // everything goes through integer ids to avoid refernces (which i don't seem to understand
 // well enough to write event the simplest data structures)
 
-// todo: no_to_id not needed
 pub struct SnarlForest {
-    no_to_id : Vec<String>,
     id_to_no : HashMap<String, usize>,
     root_nos : HashSet<usize>,
     to_parent : HashMap<usize, usize>,
@@ -18,7 +16,6 @@ impl SnarlForest {
 
     pub fn new() -> SnarlForest {
         SnarlForest {
-            no_to_id : Vec::new(),
             id_to_no : HashMap::new(),
             root_nos : HashSet::new(),
             to_parent : HashMap::new(),
@@ -33,8 +30,7 @@ impl SnarlForest {
         if self.id_to_no.contains_key(id) {
             no = *self.id_to_no.get(id).unwrap();        
         } else {
-            no = self.no_to_id.len();
-            self.no_to_id.push(id.to_string());
+            no = self.id_to_no.len();
             self.id_to_no.insert(id.to_string(), no);
             if hprc_id.is_some() {
                 self.no_to_hprc_id.insert(no, hprc_id.unwrap());
@@ -55,18 +51,13 @@ impl SnarlForest {
 
     // run once after adding everything to compute all the roots
     pub fn calculate_roots(&mut self) {
-        for no in 0..self.no_to_id.len() {
+        for no in 0..self.id_to_no.len() {
             if !self.to_parent.contains_key(&no) {
                 self.root_nos.insert(no);
             }
         }
     }
     
-    // numeric to string id
-    pub fn get_id(&self, no : usize) -> &str {
-        &self.no_to_id[no]
-    }
-
     // string to numeric id
     pub fn get_no(&self, id : &str) -> usize {
         *self.id_to_no.get(id).unwrap()
@@ -81,7 +72,7 @@ impl SnarlForest {
 
         while queue.len() > 0 {
             let no = queue.pop_front().unwrap();
-            match self.to_children.get(&self.get_no(id)) {
+            match self.to_children.get(&no) {
                 Some(children) => {
                     for child in children {
                         queue.push_back(*child);
