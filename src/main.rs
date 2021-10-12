@@ -3,10 +3,12 @@ use rust_htslib::bcf::{Reader, Writer, Read, record, Header, Format};
 use std::collections::{HashMap, HashSet};
 use indicatif::ProgressBar;
 mod snarl_tree;
+use crate::snarl_tree::SnarlForest;
 
 // Store ID -> AT for each record in the deconstruct VCF
-fn make_id_to_at_index(vcf_path : &String) -> HashMap<String, Vec<String>> {
+fn make_id_to_at_index(vcf_path : &String) -> (HashMap<String, Vec<String>>, SnarlForest) {
     let mut id_to_at = HashMap::new();
+    let mut snarl_forest = SnarlForest::new();
     let mut vcf = Reader::from_path(vcf_path).expect("Error opening VCF");
     for (_i, record_result) in vcf.records().enumerate() {
         let record = record_result.expect("Fail to read record");
@@ -15,8 +17,10 @@ fn make_id_to_at_index(vcf_path : &String) -> HashMap<String, Vec<String>> {
         let id_string_cpy = (*id_string).to_string();
         let at_strings = get_vcf_at(&record);
         id_to_at.insert(id_string_cpy, at_strings);
+        snarl_forest.add_id(&*id_string, get_vcf_ps(&record));
     }
-    id_to_at
+    snarl_forest.calculate_roots();
+    (id_to_at, snarl_forest)
 }
 
 // Store <CHROM,POS> -> GT for each record in the pangenie VCF
@@ -363,7 +367,7 @@ fn main() -> Result<(), String> {
 
     // index the full vcf from deconstruct (it must contain all the levels and annotations)
     eprintln!("Indexing deconstruct VCF ATs by ID: {}", full_vcf_path);
-    let decon_id_to_at = make_id_to_at_index(full_vcf_path);
+    let decon_id_to_at = make_id_to_at_index(full_vcf_path).0;
 
     // index the pangenie vcf.  its id's aren't consistent so we use coordinates instead
     eprintln!("Indexing genotyped VCF GTs by position: {}", pg_vcf_path);

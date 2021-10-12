@@ -1,84 +1,57 @@
-use std::collections::{HashMap};
-use std::rc::Rc;
-use std::cell::{RefCell, RefMut};
-use std::borrow::BorrowMut;
+use std::collections::{HashMap, HashSet};
 
-// tree node contains just a snarl id
-struct SnarlTreeNode<'a> {
-    id : &'a str,
-    parent : Option<&'a RefCell<SnarlTreeNode<'a>>>,
-    children : Vec<&'a RefCell<SnarlTreeNode<'a>>>,
+// represent snarl nesting relationships
+// everything goes through integer ids to avoid refernces (which i don't seem to understand
+// well enough to write event the simplest data structures)
+pub struct SnarlForest {
+    no_to_id : Vec<String>,
+    id_to_no : HashMap<String, usize>,
+    root_nos : HashSet<usize>,
+    to_parent : HashMap<usize, usize>,
+    to_children : HashMap<usize, Vec<usize>>,
 }
 
-// forest nodes are owned by the hashma which indexes them by name
-// we wrap in RefCell to force rust to give us mutable access to references
-// otherwise it's impossible (in my hands at least) to have multiple references
-// and still want to to do updates. 
-pub struct SnarlForest<'a> {
-    roots : Vec<&'a RefCell<SnarlTreeNode<'a>>>,
-    idx : HashMap<&'a str, RefCell<SnarlTreeNode<'a>>>,
-}
+impl SnarlForest {
 
-impl<'a> SnarlForest<'a> {
-
-    pub fn has_node(&'a self, id : &'a str) -> bool {
-        return self.idx.contains_key(id);
-    }
-
-    pub fn get_node(&'a self, id : &'a str) -> &'a RefCell<SnarlTreeNode<'a>> {
-        return self.idx.get(id).unwrap();
-    }
-
-    pub fn get_parent_id(&'a self, id : &'a str) -> Option<&'a str> {
-        assert_eq!(self.has_node(id), true);
-        match self.get_node(id).borrow().parent {
-            Some(parent) => Some(parent.borrow().id),
-            None => None,
+    pub fn new() -> SnarlForest {
+        SnarlForest {
+            no_to_id : Vec::new(),
+            id_to_no : HashMap::new(),
+            root_nos : HashSet::new(),
+            to_parent : HashMap::new(),
+            to_children : HashMap::new(),
         }
-    }
-
-    // todo: would be nice to provide iterator but am a bit too rusted out atm
-    pub fn get_child_ids(&'a self, id : &'a str) -> Vec<&'a str> {
-        assert_eq!(self.has_node(id), true);
-        let mut children : Vec<&'a str> = Vec::new();
-        for child in &self.get_node(id).borrow().children {
-            children.push(child.borrow().id);            
-        }
-        children
-    }
-
-    // todo: ditto above
-    pub fn get_root_ids(&'a self) -> Vec<&'a str> {
-        let mut roots : Vec<&'a str> = Vec::new();
-        for root in &self.roots {
-            roots.push(root.borrow().id);
-        }
-        roots
     }
     
-    // make a new node and add it to the forest (but not attached to anything)
-    pub fn add_node(&'a mut self, id : &'a str) {
-        let new_node = RefCell::new(SnarlTreeNode {
-            id : id,
-            parent : None,
-            children : vec![]
-        });
-        self.idx.insert(id, new_node);
+    // add node/parent to forest
+    pub fn add_id(&mut self, id : &str, parent_id : Option<String>) -> usize {
+        let no : usize;
+        if self.id_to_no.contains_key(id) {
+            no = *self.id_to_no.get(id).unwrap();
+        } else {
+            no = self.no_to_id.len();
+            self.no_to_id.push(id.to_string());
+            self.id_to_no.insert(id.to_string(), no);
+        }
+        if parent_id.is_some() {
+            let par_no = self.add_id(&parent_id.unwrap(), None);
+            if !self.to_parent.contains_key(&no) {
+                self.to_parent.insert(no, par_no);
+            }
+            if !self.to_children.contains_key(&par_no) {
+                self.to_children.insert(par_no, Vec::new());
+            }
+            self.to_children.get_mut(&par_no).unwrap().push(no);
+        }
+        no
     }
 
-    // set a parent
-    pub fn set_parent(&'a self, child : &'a RefCell<SnarlTreeNode<'a>>, parent : &'a RefCell<SnarlTreeNode<'a>>) {
-        child.borrow_mut().parent = Some(parent);
-        parent.borrow_mut().children.push(child);
-    }
-
-    // figure out roots.  run once, after all nodes added and set parented.
-    pub fn find_roots(&'a mut self) {
-        for node in self.idx.values() {
-            if node.borrow().parent.is_none() {
-                self.roots.push(node);
+    pub fn calculate_roots(&mut self) {
+        for no in 0..self.no_to_id.len() {
+            if !self.to_parent.contains_key(&no) {
+                self.root_nos.insert(no);
             }
         }
     }
- 
 }
+
