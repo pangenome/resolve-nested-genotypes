@@ -283,6 +283,7 @@ fn resolve_genotypes(full_vcf_path : &String,
         let mut added_count : u64 = 0;
         let mut unresolved_ids : Vec<String> = Vec::new();
         let bar = ProgressBar::new(decon_id_to_at.len() as u64);
+        let mut log_lines : Vec<String> = Vec::new();
         for (_i, record_result) in vcf.records().enumerate() {
             let record = record_result.expect("Fail to read record");
             let record_id = &record.id();
@@ -328,7 +329,7 @@ fn resolve_genotypes(full_vcf_path : &String,
                 if parent_found == false {
                     // no hope of ever genotyping this site if it doesn't have a genotype already and doesn't have a parent record
                     // in the deconstruct vcf.  (this should never happene on the full deconstruct vcf, but could on a subset)
-                    eprintln!("Warning: Top-level (no PS tag) site not present in genotyped vcf (ID {}).  Setting to ./.", id_string_cpy);
+                    log_lines.push(format!("Warning: Top-level (no PS tag) site not present in genotyped vcf (ID {}).  Setting to ./.", id_string_cpy));
                     inferred_gt = null_gt.clone();
                     gt_found = true;
                 }
@@ -345,6 +346,9 @@ fn resolve_genotypes(full_vcf_path : &String,
             bar.inc(1);
         }
         bar.finish();
+        for log_line in log_lines {
+            eprintln!("{}", log_line);
+        }
         added_count_total += added_count;
         eprintln!("   resolved {} sites", added_count);
         if added_count == 0 || added_count_total == decon_id_to_at.len() as u64 {
