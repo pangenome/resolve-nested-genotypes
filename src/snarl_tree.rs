@@ -9,7 +9,7 @@ pub struct SnarlForest {
     root_nos : HashSet<usize>,
     to_parent : HashMap<usize, usize>,
     to_children : HashMap<usize, Vec<usize>>,
-    no_to_hprc_id : HashMap<usize, String>, // todo: oops should be vec
+    no_to_hprc_id : HashMap<usize, String>, 
 }
 
 impl SnarlForest {
@@ -28,13 +28,13 @@ impl SnarlForest {
     pub fn add_id(&mut self, id : &str, hprc_id : Option<String>, parent_id : Option<String>) -> usize {
         let no : usize;
         if self.id_to_no.contains_key(id) {
-            no = *self.id_to_no.get(id).unwrap();        
+            no = *self.id_to_no.get(id).unwrap();
         } else {
             no = self.id_to_no.len();
             self.id_to_no.insert(id.to_string(), no);
-            if hprc_id.is_some() {
-                self.no_to_hprc_id.insert(no, hprc_id.unwrap());
-            }
+        }
+        if hprc_id.is_some() {
+            self.no_to_hprc_id.insert(no, hprc_id.unwrap());
         }
         if parent_id.is_some() {
             let par_no = self.add_id(&parent_id.unwrap(), None, None);
@@ -45,6 +45,7 @@ impl SnarlForest {
                 self.to_children.insert(par_no, Vec::new());
             }
             self.to_children.get_mut(&par_no).unwrap().push(no);
+            
         }
         no
     }
@@ -90,11 +91,11 @@ impl SnarlForest {
     // leaf : id
     // not a leaf: colon-separated list of leaves below
     pub fn get_hprc_id(&self, id : &str) -> String {
-        let no = self.id_to_no.get(id).expect("Could not find ID");
         let leaf_nos = self.leaves_below(id);
         let mut hprc_id = String::new();
         for i in 0..leaf_nos.len() {
-            hprc_id.push_str(self.no_to_hprc_id.get(no).unwrap());
+            hprc_id.push_str(self.no_to_hprc_id.get(&leaf_nos[i])
+                             .expect(&format!("Unable to get ID of child node number {} of {}", leaf_nos[i], id)));
             if i < leaf_nos.len() - 1 {
                 hprc_id.push(':');
             }
