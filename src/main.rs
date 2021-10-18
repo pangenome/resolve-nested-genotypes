@@ -1,7 +1,6 @@
 use std::env;
 use rust_htslib::bcf::{Reader, Writer, Read, record, Header, Format};
 use std::collections::{HashMap, VecDeque};
-use std::cmp;
 use indicatif::ProgressBar;
 extern crate rayon;
 use rayon::prelude::*;
@@ -331,7 +330,6 @@ fn write_resolved_vcf(vcf_path : &String,
         out_header.remove_info(info_tag.as_bytes());
     }
     out_header.push_record(b"##INFO=<ID=ID,Number=1,Type=String,Description=\"Colon-separated list of leaf HGSVC-style IDs\"");
-    let num_samples = pg_samples.len();
     for pg_sample in pg_samples {
         out_header.push_sample(pg_sample);
     }
@@ -440,15 +438,18 @@ fn get_alt_allele_names(record : &record::Record) -> Vec<String> {
     let mut counter = 0 as usize;
     for i in 1..alleles.len() {
         let mut allele_name = String::new();
-        let alt_allele = &alleles[i];
+        let alt_allele = alleles[i];
         
         let stype;
+        let mut slen = 0;
         if alleles[0].len() == 1 && alt_allele.len() == 1 {
             stype = "SNV".to_string();
-        } else if alleles[0].len() == 1 && alt_allele.len() > 1 && alleles[0][0] == alt_allele[0] {
+        } else if alleles[0].len() < alt_allele.len() && &alt_allele[0..alleles[0].len()] == alleles[0] {
             stype = "INS".to_string();
-        } else if alleles[0].len() > 1 && alt_allele.len() == 1 && alleles[0][0] == alt_allele[0] {
+            slen = alt_allele.len() - alleles[0].len();
+        } else if alleles[0].len() > alt_allele.len() && &alleles[0][0..alt_allele.len()] == alt_allele {
             stype = "DEL".to_string();
+            slen = alleles[0].len() - alt_allele.len();
         } else {
             stype = "COMPLEX".to_string();
         }
@@ -471,8 +472,7 @@ fn get_alt_allele_names(record : &record::Record) -> Vec<String> {
         } else {
             allele_name.push_str(&format!("-{}-", counter));
             counter += 1;
-            let allele_len = cmp::max(alleles[0].len(), alt_allele.len());
-            allele_name.push_str(&allele_len.to_string());
+            allele_name.push_str(&slen.to_string());
         }
         allele_names.push(allele_name);
     }
