@@ -157,7 +157,7 @@ impl DeconVCFIndex {
                     for sample_no in 0..cur_gts.len() {
                         let mut child_gt : Vec<i16> = Vec::new();
                         for cur_gt in &cur_gts[sample_no] {
-                            let child_al = child_alleles[*cur_gt as usize];
+                            let child_al = if *cur_gt >= 0 { child_alleles[*cur_gt as usize] } else { *cur_gt };
                             child_gt.push(child_al);
                         }
                         child_gts.push(child_gt);
@@ -171,9 +171,9 @@ impl DeconVCFIndex {
                              
     }
 
-    pub fn get_genotype(&self, id : &str) -> &Vec<Vec<i16>> {
+    pub fn get_genotype(&self, id : &str) -> Option<&Vec<Vec<i16>>> {
         let no = self.id_to_no.get(id).unwrap();
-        self.no_to_gt.get(no).expect("ID not found in map")
+        self.no_to_gt.get(no)
     }
 
     // for a given allele, walk down as far as possible to all child alleles below it
@@ -330,9 +330,13 @@ fn write_resolved_vcf(vcf_path : &String,
         out_header.remove_info(info_tag.as_bytes());
     }
     out_header.push_record(b"##INFO=<ID=ID,Number=1,Type=String,Description=\"Colon-separated list of leaf HGSVC-style IDs\"");
+    let num_samples = pg_samples.len();
     for pg_sample in pg_samples {
         out_header.push_sample(pg_sample);
     }
+    let mut null_gt : Vec<record::GenotypeAllele> = Vec::new();
+    null_gt.resize(num_samples * 2, record::GenotypeAllele::UnphasedMissing);
+    
     let mut out_vcf = Writer::from_stdout(&out_header, true, Format::Vcf).unwrap();
 
     for (_i, record_result) in vcf.records().enumerate() {
@@ -363,16 +367,22 @@ fn write_resolved_vcf(vcf_path : &String,
 
         let mut gt_vec : Vec<record::GenotypeAllele> = Vec::new();
         
-        let found_gt = decon_index.get_genotype(&String::from_utf8_lossy(&out_record.id()));
-        for sample_gt in found_gt {
-            for gt_allele in sample_gt {
-                if *gt_allele == -1 {
-                    gt_vec.push(record::GenotypeAllele::UnphasedMissing);
-                } else {
-                    gt_vec.push(record::GenotypeAllele::Unphased(*gt_allele as i32));
+        match decon_index.get_genotype(&String::from_utf8_lossy(&out_record.id())) {
+            Some(found_gt) => {
+                for sample_gt in found_gt {
+                    for gt_allele in sample_gt {
+                        if *gt_allele == -1 {
+                            gt_vec.push(record::GenotypeAllele::UnphasedMissing);
+                        } else {
+                            gt_vec.push(record::GenotypeAllele::Unphased(*gt_allele as i32));
+                        }
+                    }
                 }
+            },
+            None => {
+                gt_vec = null_gt.clone();
             }
-        }
+        };
 
         out_record.push_genotypes(&gt_vec).expect("Could not set GT");
 
