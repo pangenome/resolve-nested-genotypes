@@ -547,63 +547,6 @@ fn flip_at(at : &String) -> String {
     flipped_string
 }
 
-/*
-// scan the deconstructed VCF and print it to stdout, but with the resolved genotypes
-fn write_resolved_vcf(full_vcf_path : &String,
-                      pg_vcf_path : &String,
-                      id_to_genotype : &HashMap<String, Vec<Vec<i16>>>,
-                      snarl_forest : &SnarlForest) {
-
-    // we get the samples from the pg vcf
-    let pg_vcf = Reader::from_path(pg_vcf_path).expect("Error opening VCF");
-    let pg_samples = pg_vcf.header().samples();
-
-    // we write in terms of the original vcf
-    // todo: it would be nice to carry over GQ and other fields of interest
-    let mut in_vcf = Reader::from_path(full_vcf_path).expect("Error opening VCF");
-    let in_header = in_vcf.header();
-    let mut out_header = Header::from_template_subset(in_header, &[]).unwrap();
-    const REMOVE_TAGS : &'static [&'static str] = &["CONFLICT", "AC", "AF", "NS", "AN", "AT"];
-    for info_tag in REMOVE_TAGS {
-        out_header.remove_info(info_tag.as_bytes());
-    }
-    out_header.push_record(b"##INFO=<ID=ID,Number=1,Type=String,Description=\"Colon-separated list of leaf HGSVC-style IDs\"");
-    for pg_sample in pg_samples {
-        out_header.push_sample(pg_sample);
-    }
-    let mut out_vcf = Writer::from_stdout(&out_header, true, Format::Vcf).unwrap();
-    for (_i, record_result) in in_vcf.records().enumerate() {
-        let in_record = record_result.expect("Fail to read record");
-        // todo: could be faster to edit in_record in place?  probably doesn't make much difference either way
-        let mut out_record = out_vcf.empty_record();
-        out_record.set_rid(in_record.rid());
-        out_record.set_pos(in_record.pos());
-        out_record.set_id(&in_record.id()).expect("Could not set ID");
-        out_record.set_alleles(&in_record.alleles()).expect("Could not set alleles");
-        out_record.push_info_integer(b"LV", &[get_vcf_level(&in_record)]).expect("Could not set LV");
-        match get_vcf_ps(&in_record) {
-            Some(ps_string) => out_record.push_info_string(b"PS", &[ps_string.as_bytes()]).expect("Could not set PS"),
-            None => (),
-        };
-        let hprc_id = snarl_forest.get_hprc_id(&String::from_utf8_lossy(&in_record.id()));
-        out_record.push_info_string(b"ID", &vec![hprc_id.as_bytes()]).expect("Could not set ID");
-        let mut gt_vec : Vec<record::GenotypeAllele> = Vec::new();
-        let found_gt = id_to_genotype.get(&*String::from_utf8_lossy(&out_record.id())).expect("ID not found in map");
-        for sample_gt in found_gt {
-            for gt_allele in sample_gt {
-                if *gt_allele == -1 {
-                    gt_vec.push(record::GenotypeAllele::UnphasedMissing);
-                } else {
-                    gt_vec.push(record::GenotypeAllele::Unphased(*gt_allele));
-                }
-            }
-        }
-        out_record.push_genotypes(&gt_vec).expect("Could not set GT");
-        out_vcf.write(&out_record).unwrap();
-    }
-}
- */
-
 fn main() -> Result<(), String> {
 
 	 let args: Vec<String> = env::args().collect();
@@ -614,7 +557,7 @@ fn main() -> Result<(), String> {
 	 let full_vcf_path = &args[1];
     let pg_vcf_path = &args[2];
     // todo: cli
-    rayon::ThreadPoolBuilder::new().num_threads(8).build_global().unwrap();
+    //rayon::ThreadPoolBuilder::new().num_threads(8).build_global().unwrap();
 
     // index the full vcf from deconstruct (it must contain all the levels and annotations)
     let mut decon_vcf_index = make_decon_vcf_index(full_vcf_path);
