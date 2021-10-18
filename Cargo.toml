@@ -9,3 +9,4 @@ edition = "2018"
 [dependencies]
 rust-htslib = { version = "*", default-features = false }
 indicatif = {version = "*"}
+rayon = {version = "*"}
