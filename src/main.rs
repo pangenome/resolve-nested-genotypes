@@ -1,4 +1,4 @@
-use std::env;
+use clap::{App, Arg};
 use rust_htslib::bcf::{Reader, Writer, Read, record, Header, Format};
 use std::collections::{HashMap, VecDeque};
 use std::cmp;
@@ -238,7 +238,7 @@ impl DeconVCFIndex {
 
 // Index the sites in the deconstruced VCF
 // Done in 2 passes in case any children appear before parents (todo is this even possible?)
-fn make_decon_vcf_index(vcf_path : &String) -> DeconVCFIndex {
+fn make_decon_vcf_index(vcf_path : &str) -> DeconVCFIndex {
     let mut index = DeconVCFIndex::new();
     {
         // pass 1: index each site in the deconstructed VCF
@@ -277,7 +277,7 @@ fn make_decon_vcf_index(vcf_path : &String) -> DeconVCFIndex {
 }
 
 // Store <CHROM,POS> -> GT for each record in the pangenie VCF
-fn make_pos_to_gt_index(vcf_path : &String, index : &mut DeconVCFIndex) {
+fn make_pos_to_gt_index(vcf_path : &str, index : &mut DeconVCFIndex) {
     let mut vcf = Reader::from_path(vcf_path).expect("Error opening VCF");    
     for (_i, record_result) in vcf.records().enumerate() {
         let record = record_result.expect("Fail to read record");
@@ -290,8 +290,8 @@ fn make_pos_to_gt_index(vcf_path : &String, index : &mut DeconVCFIndex) {
     index.resolve_nested_genotypes();
 }
 
-fn write_resolved_vcf(vcf_path : &String,
-                      pg_vcf_path : &String,
+fn write_resolved_vcf(vcf_path : &str,
+                      pg_vcf_path : &str,
                       decon_index : &DeconVCFIndex) {
     let mut vcf = Reader::from_path(vcf_path).expect("Error opening VCF");
 
@@ -540,15 +540,49 @@ fn flip_at(at : &String) -> String {
 
 fn main() -> Result<(), String> {
 
-	 let args: Vec<String> = env::args().collect();
-    if args.len() != 3 {
-        eprintln!("Usage: {} <deconstruct vcf> <genotype subset vcf>", &args[0]);
-        std::process::exit(1);
-    }
-	 let full_vcf_path = &args[1];
-    let pg_vcf_path = &args[2];
-    // todo: cli
-    //rayon::ThreadPoolBuilder::new().num_threads(8).build_global().unwrap();
+    let matches = App::new("resolve-nested-genotypes")
+        .version("0.1.0")
+        .author("Glenn Hickey <glenn.hickey@gmail.com>")
+        .about(concat!(
+            "\nPropagte genotypes down to nested alleles using PS and AT tags.\n",
+            "The first argument should be a VCF created by vg deconstruct.\n",
+            "The second argument should be a genotyped subset of the first. It does not need any tags.\n",
+            "Nesting information in LV and PS tags is added back to the output.  An additionl ID tag is\n",
+            "added as well, that stores information about the lowest alleles below each allele\n"
+        ))
+        .arg(
+            Arg::with_name("full_vcf_path")
+                .value_name("DECONSTRUCT_VCF")
+                .help("Full VCF from vg deconstruct")
+                .required(true)
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("pg_vcf_path")
+                .value_name("GENOTYPE_VCF")
+                .help("Subset VCF with genotypes")
+                .required(true)
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("threads")
+                .short("t")
+                .long("threads")
+                .value_name("N")
+                .help("Use N threads (default: all available)")
+                .takes_value(true),
+        )
+        .get_matches();
+    
+	 let full_vcf_path = matches.value_of("full_vcf_path").unwrap();
+    let pg_vcf_path = matches.value_of("pg_vcf_path").unwrap();
+    match matches.value_of("threads") {
+        Some(num_threads) => {
+            let num_threads = num_threads.parse::<usize>().expect("Failed to parse threads parameter to int");
+            rayon::ThreadPoolBuilder::new().num_threads(num_threads).build_global().unwrap();
+        },
+        None => ()
+    };
 
     // index the full vcf from deconstruct (it must contain all the levels and annotations)
     let mut decon_vcf_index = make_decon_vcf_index(full_vcf_path);
