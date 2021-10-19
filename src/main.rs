@@ -1,6 +1,7 @@
 use std::env;
 use rust_htslib::bcf::{Reader, Writer, Read, record, Header, Format};
 use std::collections::{HashMap, VecDeque};
+use std::cmp;
 use indicatif::ProgressBar;
 extern crate rayon;
 use rayon::prelude::*;
@@ -72,48 +73,25 @@ impl DeconVCFIndex {
 
         // link from each parent allele to the corresponding contained child allele
         // or -1 if not found
-        let mut parent_allele_to_child_allele = Vec::new();
+        let parent_allele_to_child_allele : Vec<i16>;
         {
             let parent_ats : &Vec<String> = &self.no_to_info.get(parent_no).unwrap().ats;
-            let child_ats : &Vec<String> = &self.no_to_info.get(no).unwrap().ats;            
-            parent_allele_to_child_allele.resize(parent_ats.len(), -1);
-            
-            // for every child allele in parallel, compute (child_allele, containing_parent_allele) tuple
-            let par_to_chi : Vec<(usize, Option<usize>)> = child_ats
+            let child_ats : &Vec<String> = &self.no_to_info.get(no).unwrap().ats;
+            let child_rev_ats : Vec<String> = child_ats.iter().map(|at| { flip_at(at) }).collect();
+
+            parent_allele_to_child_allele = parent_ats
                 .par_iter()
-                .enumerate()
-                .map(|(i, child_at)| {
-                    let mut par_idx : Option<usize> = None;
-                    // try to find it contained in a parent allele
-                    for j in 0..parent_ats.len() {
-                        let parent_at : &String = &parent_ats[j];
-                        if parent_at.find(child_at).is_some() {
-                            // if found, then add the link to the parent's child indexes
-                            par_idx = Some(j);
-                            break;
+                .map(|parent_at| {
+                    for j in 0..child_ats.len() {
+                        if parent_at.contains(&child_ats[j]) || parent_at.contains(&child_rev_ats[j]) {
+                            return j as i16;
                         }
                     }
-                    if par_idx.is_none() && false {
-                        // if nothing was found, repeat on reversed child traversals
-                        let child_rev_at = flip_at(child_at);
-                        for j in 0..parent_ats.len() {
-                            let parent_at : &String = &parent_ats[j];
-                            if parent_at.find(&child_rev_at).is_some() {
-                                par_idx = Some(j);
-                                break;
-                            }
-                        }
-                    }
-                    (i, par_idx)
+                    -1 as i16
                 })
                 .collect();
-            // use the tuples to set the parent-to-child index array
-            for pc in par_to_chi {
-                if pc.1.is_some() {
-                    parent_allele_to_child_allele[pc.1.unwrap()] = pc.0 as i16;
-                }
-            }
         }
+            
         //set the parent's allele links to the child alleles
         self.no_to_info
             .get_mut(parent_no)
@@ -153,6 +131,7 @@ impl DeconVCFIndex {
                 let nested_alleles = &self.no_to_info.get(&cur_no).unwrap().nested_alleles;
 
                 for (child_no, child_alleles) in nested_alleles {
+                    eprintln!("child no {} child alleles {:?}", child_no, child_alleles);
                     let mut child_gts : Vec<Vec<i16>> = Vec::new();
                     for sample_no in 0..cur_gts.len() {
                         let mut child_gt : Vec<i16> = Vec::new();
@@ -168,6 +147,7 @@ impl DeconVCFIndex {
             }
             next_round = next_round_after;
         }
+        eprintln!("{:?}", self.no_to_gt);
                              
     }
 
@@ -240,15 +220,15 @@ impl DeconVCFIndex {
             if i > 1 {
                 id_tag.push(','); // comma-separated list of parent alleles
             }
-            for (j, (child_no, child_allele)) in lowest_alleles[i].iter().enumerate() {
-                if j > 0 {
-                    id_tag.push(':'); // colon-separated list of child alleles for given parent allele
-                }
+            eprintln!("lowest alleles {:?}", lowest_alleles[i]);
+            let mut ccount : usize = 0;
+            for (_j, (child_no, child_allele)) in lowest_alleles[i].iter().enumerate() {
                 if child_allele > &0 {
+                    if ccount > 0 {
+                        id_tag.push(':'); // colon-separated list of child alleles for given parent allele
+                    }
                     id_tag.push_str(&self.no_to_info.get(child_no).unwrap().alt_allele_names[*child_allele as usize - 1]);
-                } else {
-                    // no child allele that is contained in the parent allele -- so just write it
-                    panic!("no child allele found for {}", id);
+                    ccount += 1;
                 }
             }
         }
@@ -462,6 +442,7 @@ fn get_alt_allele_names(record : &record::Record) -> Vec<String> {
             slen = alleles[0].len() - alt_allele.len();
         } else {
             stype = "COMPLEX".to_string();
+            slen = cmp::max(alleles[0].len(), alt_allele.len());
         }
 
         let rid = record.rid().unwrap();
