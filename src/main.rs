@@ -418,9 +418,6 @@ fn get_vcf_at(record : &record::Record) -> Vec<String> {
 // The IDs itself are unique, for HGSVC we defined them based on the following pattern: 
 // <chrom>-<allele start>-<type>-<REF>-<ALT> (for SNV only) 
 // <chrom>-<allele start>-<type>-<count>-<allele length>  (for other variant types: INS, DEL, COMPLEX)
-//
-// deconstructed VCfs aren't going to fit this mold terribly well (big multiallele sites even in leaves) but we do our best
-// it may make more sense just to use snarl ids?
 fn get_alt_allele_names(record : &record::Record) -> Vec<String> {
     
     let mut allele_names = Vec::new();
@@ -432,14 +429,17 @@ fn get_alt_allele_names(record : &record::Record) -> Vec<String> {
         
         let stype;
         let mut slen = 0;
+        let mut offset = 0; // if we zip up common prefixes for indel, shift its position to the right a bit
         if alleles[0].len() == 1 && alt_allele.len() == 1 {
             stype = "SNV".to_string();
         } else if alleles[0].len() < alt_allele.len() && &alt_allele[0..alleles[0].len()] == alleles[0] {
             stype = "INS".to_string();
             slen = alt_allele.len() - alleles[0].len();
+            offset = alleles[0].len() as i64 - 1;
         } else if alleles[0].len() > alt_allele.len() && &alleles[0][0..alt_allele.len()] == alt_allele {
             stype = "DEL".to_string();
             slen = alleles[0].len() - alt_allele.len();
+            offset = alt_allele.len() as i64 - 1;
         } else {
             stype = "COMPLEX".to_string();
             slen = cmp::max(alleles[0].len(), alt_allele.len());
@@ -451,7 +451,7 @@ fn get_alt_allele_names(record : &record::Record) -> Vec<String> {
         allele_name.push_str(&chrom_string);
         allele_name.push('-');
         // api stores 0-based position which we need to convert to 1-based ourselves
-        let pos_1 = record.pos() + 1;
+        let pos_1 = record.pos() + 1 + offset;
         allele_name.push_str(&pos_1.to_string());
         allele_name.push('-');
         allele_name.push_str(&stype);
