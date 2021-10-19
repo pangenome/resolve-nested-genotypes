@@ -131,7 +131,7 @@ impl DeconVCFIndex {
                 let nested_alleles = &self.no_to_info.get(&cur_no).unwrap().nested_alleles;
 
                 for (child_no, child_alleles) in nested_alleles {
-                    eprintln!("child no {} child alleles {:?}", child_no, child_alleles);
+                    //eprintln!("child no {} child alleles {:?}", child_no, child_alleles);
                     let mut child_gts : Vec<Vec<i16>> = Vec::new();
                     for sample_no in 0..cur_gts.len() {
                         let mut child_gt : Vec<i16> = Vec::new();
@@ -146,9 +146,7 @@ impl DeconVCFIndex {
                 }
             }
             next_round = next_round_after;
-        }
-        eprintln!("{:?}", self.no_to_gt);
-                             
+        }                             
     }
 
     pub fn get_genotype(&self, id : &str) -> Option<&Vec<Vec<i16>>> {
@@ -220,7 +218,6 @@ impl DeconVCFIndex {
             if i > 1 {
                 id_tag.push(','); // comma-separated list of parent alleles
             }
-            eprintln!("lowest alleles {:?}", lowest_alleles[i]);
             let mut ccount : usize = 0;
             for (_j, (child_no, child_allele)) in lowest_alleles[i].iter().enumerate() {
                 if child_allele > &0 {

@@ -46,6 +46,8 @@ The intended use case is as follows
 * genotype the top-level sites with [Pangenie](https://bitbucket.org/jana_ebler/pangenie/src/master/)
 * infer genotypes of all nested sites from the top-level sites
 
+Given a nested site, each of its alleles must be checked against each of its parent's alleles to determine the exact nesting relationship.  Each check is substring match query of the child alleles AT string vs the parent's.  For large bubbles, this is rather slow despite being multithreaded.  
+
 #### ID INFO Field
 
 The output VCF will be annotated with this field (note that top-level bubbles are whatever's genotyped in the input and need not be LV=0)
