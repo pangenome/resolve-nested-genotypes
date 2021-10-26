@@ -154,6 +154,19 @@ impl DeconVCFIndex {
         self.no_to_gt.get(no)
     }
 
+    // the htslib api will get very mad when writing vcfs if every sample doesnt have the same ploidy
+    // at every site.  to avoid crashing on input where this isn't the case, we get the maximum
+    // value and use it to pad everything when writing
+    pub fn get_max_ploidy(&self) -> usize {
+        let mut max_ploidy : usize = 0;
+        for (_no, gts) in &self.no_to_gt {
+            for gt in gts {
+                max_ploidy = cmp::max(gt.len(), max_ploidy);
+            }
+        }
+        max_ploidy
+    }
+
     // for a given allele, walk down as far as possible to all child alleles below it
     //
     // todo? goin allele by allele uses way more hash table lookups than we actually need,
@@ -296,6 +309,13 @@ fn write_resolved_vcf(vcf_path : &str,
     let pg_vcf = Reader::from_path(pg_vcf_path).expect("Error opening VCF");
     let pg_samples = pg_vcf.header().samples();
 
+    // we get the max ploidy encountered, using it to pad output gts to avoid crashes
+    // (seems like vector must be fixed across all sites?)
+    let max_ploidy = decon_index.get_max_ploidy();
+    if max_ploidy != 2 {
+        eprintln!("(Setting all GT ploidys to max found in input = {})", max_ploidy);
+    }
+
     // we write in terms of the original vcf
     // todo: it would be nice to carry over GQ and other fields of interest
     //       this is done by adding them to the pos_to_gt_index...
@@ -339,19 +359,20 @@ fn write_resolved_vcf(vcf_path : &str,
         let id_info_tag = decon_index.make_id_tag(&id_string);
         out_record.push_info_string(b"ID", &vec![id_info_tag.as_bytes()]).expect("Could not set ID");
 
-        // resolve the genotypes
-        //Vec<Vec<i16>> genotypes = resolve_genotypes(id_string, decon_index, gt_index);
-
         let mut gt_vec : Vec<record::GenotypeAllele> = Vec::new();
-        
         match decon_index.get_genotype(&String::from_utf8_lossy(&out_record.id())) {
             Some(found_gt) => {
                 for sample_gt in found_gt {
-                    for gt_allele in sample_gt {
-                        if *gt_allele == -1 {
-                            gt_vec.push(record::GenotypeAllele::UnphasedMissing);
+                    for allele_idx in 0..max_ploidy {
+                        if allele_idx < sample_gt.len() {
+                            let gt_allele = &sample_gt[allele_idx];
+                            if *gt_allele == -1 {
+                                gt_vec.push(record::GenotypeAllele::UnphasedMissing);
+                            } else {
+                                gt_vec.push(record::GenotypeAllele::Unphased(*gt_allele as i32));
+                            }
                         } else {
-                            gt_vec.push(record::GenotypeAllele::Unphased(*gt_allele as i32));
+                            gt_vec.push(record::GenotypeAllele::UnphasedMissing);
                         }
                     }
                 }
@@ -360,7 +381,6 @@ fn write_resolved_vcf(vcf_path : &str,
                 gt_vec = null_gt.clone();
             }
         };
-
         out_record.push_genotypes(&gt_vec).expect("Could not set GT");
 
         out_vcf.write(&out_record).unwrap();
